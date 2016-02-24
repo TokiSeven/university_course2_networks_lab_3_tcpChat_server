@@ -31,6 +31,7 @@ private slots:
     void newuser();
     void slotReadClient();
     void send_clients();
+    void deleteuser();
 
 private:
     QTimer t_send_clients;

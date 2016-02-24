@@ -40,7 +40,25 @@ void TcpChat_Server::newuser()
         Size[idusersocs] = 0;
 
         connect(SClients[idusersocs], SIGNAL(readyRead()), this, SLOT(slotReadClient()));
+        connect(SClients[idusersocs], SIGNAL(disconnected()), this, SLOT(deleteuser()));
+
+        emit s_update();
     }
+}
+void TcpChat_Server::deleteuser()
+{
+    // Получаем объект сокета, который вызвал данный слот
+    QTcpSocket* clientSocket = (QTcpSocket*)sender();
+
+    // Получаем дескриптор, для того, чтоб в случае закрытия сокета удалить его из карты
+    int idusersocs = clientSocket->socketDescriptor();
+
+    // Закрыть сокет
+    clientSocket->close();
+    // Удалим объект сокета из карты
+    SClients.remove(idusersocs);
+
+    emit s_update();
 }
 
 void TcpChat_Server::server_stop()
@@ -99,11 +117,6 @@ void TcpChat_Server::slotReadClient()
     this->send_to_all(message);
 
     emit s_update();
-
-    // Если нужно закрыть сокет
-    //clientSocket->close();
-    // Удалим объект сокета из карты
-    //SClients.remove(idusersocs);
 }
 
 void TcpChat_Server::send_to_all(QString mess)
