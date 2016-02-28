@@ -29,6 +29,9 @@ public:
     void server_stop();
     void send_to_all(QString, QString);
 
+    template <typename T>
+    void send_to_one(QString cmd, QTcpSocket *socket, T data);
+
     QList<QString> getMessages()const{return this->Messages;}
     QList<QString> getClients()const;
 
@@ -49,5 +52,25 @@ private:
     QMap<int, CLIENT> SClients;
     QList<QString> Messages;
 };
+
+template <typename T>
+void TcpChat_Server::send_to_one(QString cmd, QTcpSocket *socket, T data)
+{
+    QByteArray block;
+    QDataStream out(&block, QIODevice::WriteOnly);
+
+    //резервируем 2 байта для размера блока.
+    out << (quint16)0;
+    out << cmd;
+    out << data;
+
+    //возваращаемся в начало
+    out.device()->seek(0);
+
+    //вписываем размер блока на зарезервированное место
+    out << (quint16)(block.size() - sizeof(quint16));
+
+    socket->write(block);
+}
 
 #endif // TCPCHAT_SERVER_H

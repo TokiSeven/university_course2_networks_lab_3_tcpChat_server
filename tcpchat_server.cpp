@@ -31,8 +31,6 @@ void TcpChat_Server::newuser()
 {
     if (server_status)
     {
-        qDebug() << QString::fromStdString("New connection!");
-
         QTcpSocket* clientSocket = serv->nextPendingConnection();
 
         int idusersocs = clientSocket->socketDescriptor();
@@ -139,33 +137,22 @@ void TcpChat_Server::slotReadClient()
             SClients[idusersocs].auth = true;
             SClients[idusersocs].name = message;
             ans = "YES";
+            this->send_to_one("MESSA", SClients[idusersocs].soc, this->getMessages());
         }
         else
         {
             ans = "NO";
         }
-        QByteArray block;
-        QDataStream out(&block, QIODevice::WriteOnly);
 
         //резервируем 2 байта для размера блока.
-        out << (quint16)0;
-        out << QString::fromStdString("AUTH");
-        out << ans;
-
-        //возваращаемся в начало
-        out.device()->seek(0);
-
-        //вписываем размер блока на зарезервированное место
-        out << (quint16)(block.size() - sizeof(quint16));
-
-        SClients[idusersocs].soc->write(block);
+        this->send_to_one("AUTH", SClients[idusersocs].soc, ans);
     }
     else if (cmd == QString::fromStdString("MESS"))
     {
         if (SClients[idusersocs].auth)
         {
-            message = SClients[idusersocs].name + QString::fromStdString(": ") + message;
-            Messages.append(message);
+            message = SClients[idusersocs].name + QString::fromStdString("\n") + message;
+            this->Messages.insert(0, message);
             this->send_to_all(cmd, message);
         }
     }
@@ -177,22 +164,8 @@ void TcpChat_Server::send_to_all(QString cmd, QString mess)
 {
     if (this->server_status)
     {
-        QByteArray block;
-        QDataStream out(&block, QIODevice::WriteOnly);
-
-        //резервируем 2 байта для размера блока.
-        out << (quint16)0;
-        out << cmd;
-        out << mess;
-
-        //возваращаемся в начало
-        out.device()->seek(0);
-
-        //вписываем размер блока на зарезервированное место
-        out << (quint16)(block.size() - sizeof(quint16));
-
         foreach(int i, SClients.keys())
-            SClients[i].soc->write(block);
+            this->send_to_one(cmd, SClients[i].soc, mess);
     }
 }
 
@@ -200,7 +173,6 @@ void TcpChat_Server::send_clients()
 {
     if (this->server_status)
     {
-        qDebug() << "Sending clients";
         //from qmap to qlist
         QList<QString> addr;
         foreach(int i, SClients.keys())
