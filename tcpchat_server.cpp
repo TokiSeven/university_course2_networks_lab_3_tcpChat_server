@@ -4,6 +4,7 @@ TcpChat_Server::TcpChat_Server(QObject *parent) : QObject(parent)
 {
     this->serv = new QTcpServer;
     connect(this->serv, SIGNAL(newConnection()), this, SLOT(newuser()));
+    connect(this, SIGNAL(s_update()), this, SLOT(sl_update()));
 
     t_send_clients.setInterval(1000);
 
@@ -36,11 +37,10 @@ void TcpChat_Server::newuser()
 
         int idusersocs = clientSocket->socketDescriptor();
 
-        SClients[idusersocs] = clientSocket;
-        Size[idusersocs] = 0;
+        SClients[idusersocs].soc = clientSocket;
 
-        connect(SClients[idusersocs], SIGNAL(readyRead()), this, SLOT(slotReadClient()));
-        connect(SClients[idusersocs], SIGNAL(disconnected()), this, SLOT(deleteuser()));
+        connect(SClients[idusersocs].soc, SIGNAL(readyRead()), this, SLOT(slotReadClient()));
+        connect(SClients[idusersocs].soc, SIGNAL(disconnected()), this, SLOT(deleteuser()));
 
         emit s_update();
     }
@@ -53,12 +53,19 @@ void TcpChat_Server::deleteuser()
     // Получаем дескриптор, для того, чтоб в случае закрытия сокета удалить его из карты
     int idusersocs = clientSocket->socketDescriptor();
 
-    // Закрыть сокет
-    clientSocket->close();
     // Удалим объект сокета из карты
-    SClients.remove(idusersocs);
+    clientSocket->close();
 
     emit s_update();
+}
+
+void TcpChat_Server::sl_update()
+{
+    foreach(int i, SClients.keys())
+    {
+        if (!SClients[i].soc->isOpen())
+            SClients.remove(i);
+    }
 }
 
 void TcpChat_Server::server_stop()
@@ -67,10 +74,10 @@ void TcpChat_Server::server_stop()
     {
         foreach(int i, SClients.keys())
         {
-            QTextStream os(SClients[i]);
+            QTextStream os(SClients[i].soc);
             os.setAutoDetectUnicode(true);
             os << QDateTime::currentDateTime().toString() << "\n";
-            SClients[i]->close();
+            SClients[i].soc->close();
             SClients.remove(i);
         }
         serv->close();
@@ -91,7 +98,7 @@ void TcpChat_Server::slotReadClient()
     QDataStream in(clientSocket);
 
     //если считываем новый блок первые 2 байта это его размер
-    if (Size[idusersocs] == 0)
+    if (SClients[idusersocs].size == 0)
     {
         //если пришло меньше 2 байт ждем пока будет 2 байта
         if (clientSocket->bytesAvailable() < (int)sizeof(quint16))
@@ -100,36 +107,82 @@ void TcpChat_Server::slotReadClient()
         //считываем размер (2 байта)
         quint16 ss;
         in >> ss;
-        Size[idusersocs] = ss;
+        SClients[idusersocs].size = ss;
     }
 
     //ждем пока блок прийдет полностью
-    if (clientSocket->bytesAvailable() < Size[idusersocs])
+    if (clientSocket->bytesAvailable() < SClients[idusersocs].size)
         return;
     else
-        Size[idusersocs] = 0;//можно принимать новый блок
+        SClients[idusersocs].size = 0;//можно принимать новый блок
 
+    QString cmd;
     QString message;
+
+    in >> cmd;
     in >> message;
-    message = clientSocket->peerAddress().toString() + QString::fromStdString(": ") + message;
-    Messages.append(message);
 
-    this->send_to_all(message);
+    qDebug() << SClients[idusersocs].name << "::" << cmd << "::" << message;
 
-    emit s_update();
-}
-
-void TcpChat_Server::send_to_all(QString mess)
-{
-    if (this->server_status)
+    if (cmd == QString::fromStdString("AUTH"))
     {
-        qDebug() << "Sending message";
+        bool been = false;
+        foreach(int i, SClients.keys())
+        {
+            if (SClients[i].name == message && !been)
+                been = true;
+        }
+
+        QString ans;
+        if (!been)
+        {
+            SClients[idusersocs].auth = true;
+            SClients[idusersocs].name = message;
+            ans = "YES";
+        }
+        else
+        {
+            ans = "NO";
+        }
         QByteArray block;
         QDataStream out(&block, QIODevice::WriteOnly);
 
         //резервируем 2 байта для размера блока.
         out << (quint16)0;
-        out << QString::fromStdString("MESSAGE");
+        out << QString::fromStdString("AUTH");
+        out << ans;
+
+        //возваращаемся в начало
+        out.device()->seek(0);
+
+        //вписываем размер блока на зарезервированное место
+        out << (quint16)(block.size() - sizeof(quint16));
+
+        SClients[idusersocs].soc->write(block);
+    }
+    else if (cmd == QString::fromStdString("MESS"))
+    {
+        if (SClients[idusersocs].auth)
+        {
+            message = SClients[idusersocs].name + QString::fromStdString(": ") + message;
+            Messages.append(message);
+            this->send_to_all(cmd, message);
+        }
+    }
+
+    emit s_update();
+}
+
+void TcpChat_Server::send_to_all(QString cmd, QString mess)
+{
+    if (this->server_status)
+    {
+        QByteArray block;
+        QDataStream out(&block, QIODevice::WriteOnly);
+
+        //резервируем 2 байта для размера блока.
+        out << (quint16)0;
+        out << cmd;
         out << mess;
 
         //возваращаемся в начало
@@ -139,7 +192,7 @@ void TcpChat_Server::send_to_all(QString mess)
         out << (quint16)(block.size() - sizeof(quint16));
 
         foreach(int i, SClients.keys())
-            SClients[i]->write(block);
+            SClients[i].soc->write(block);
     }
 }
 
@@ -149,9 +202,10 @@ void TcpChat_Server::send_clients()
     {
         qDebug() << "Sending clients";
         //from qmap to qlist
-        QList<QHostAddress> addr;
+        QList<QString> addr;
         foreach(int i, SClients.keys())
-            addr.append(SClients[i]->peerAddress());
+            if (SClients[i].auth)
+                addr.append(SClients[i].name);
 
         QByteArray block;
         QDataStream out(&block, QIODevice::WriteOnly);
@@ -168,7 +222,7 @@ void TcpChat_Server::send_clients()
         out << (quint16)(block.size() - sizeof(quint16));
 
         foreach(int i, SClients.keys())
-            SClients[i]->write(block);
+            SClients[i].soc->write(block);
     }
 }
 
@@ -176,6 +230,6 @@ QList<QString> TcpChat_Server::getClients()const
 {
     QList<QString> res;
     foreach(int i, SClients.keys())
-        res.append(SClients[i]->peerAddress().toString());
+        res.append(SClients[i].name + "(" + SClients[i].soc->peerAddress().toString() + ")");
     return res;
 }

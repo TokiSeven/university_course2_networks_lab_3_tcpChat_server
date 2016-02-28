@@ -11,6 +11,14 @@
 #include <QList>
 #include <QTimer>
 
+struct CLIENT
+{
+    QString name = "NoName";
+    bool auth = false;
+    QTcpSocket *soc;
+    quint16 size = 0;
+};
+
 class TcpChat_Server : public QObject
 {
     Q_OBJECT
@@ -19,7 +27,7 @@ public:
     ~TcpChat_Server();
 
     void server_stop();
-    void send_to_all(QString);
+    void send_to_all(QString, QString);
 
     QList<QString> getMessages()const{return this->Messages;}
     QList<QString> getClients()const;
@@ -32,13 +40,13 @@ private slots:
     void slotReadClient();
     void send_clients();
     void deleteuser();
+    void sl_update();
 
 private:
     QTimer t_send_clients;
     QTcpServer *serv;
     int server_status;
-    QMap<int, QTcpSocket*> SClients;
-    QMap<int, quint16> Size;
+    QMap<int, CLIENT> SClients;
     QList<QString> Messages;
 };
 
